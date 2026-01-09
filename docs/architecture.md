@@ -211,15 +211,50 @@ Claude stops → Hook blocks → Claude addresses → Claude stops → Hook allo
            stop_hook_active=false                    stop_hook_active=true
 ```
 
-### UserPromptSubmit Hook
+### UserPromptSubmit Hooks
 
-**Purpose**: React to each user prompt (suggest skills, trigger actions).
+**Purpose**: React to each user prompt. Multiple hooks can fire on the same event.
 
-The skill-reminder.py hook:
+This toolkit includes three UserPromptSubmit hooks:
+
+#### 1. Status Update Hook (status-working.py)
+
+**Purpose**: Instructs Claude to update session-aware status file for monitoring UI.
+
+**Behavior**:
+1. Fires on every user prompt
+2. Determines status file path (session-specific or legacy)
+3. Outputs MANDATORY instruction to update status file
+4. Returns exit code 0 (advisory, non-blocking)
+
+**Status File Path**:
+- With session_id: `.claude/status.<session_id>.md`
+- Without: `.claude/status.md` (legacy fallback)
+
+**Combined with Stop Hook**: The Stop hook enforces that this status file exists and is fresh before allowing Claude to stop.
+
+#### 2. Skill Suggestion Hook (skill-reminder.py)
+
+**Purpose**: Suggests relevant skills based on prompt keywords.
+
+**Behavior**:
 1. Scans user prompt for keywords
-2. Matches against skill descriptions
+2. Matches against skill trigger descriptions
 3. Suggests relevant skills via stdout
 4. Returns exit code 0 (non-blocking)
+
+#### 3. Documentation Trigger Hook (read-docs-trigger.py)
+
+**Purpose**: Triggers deep documentation reading when user says "read the docs".
+
+**Behavior**:
+1. Checks if "read the docs" appears in user message
+2. If found, outputs reminder to read docs/index.md and follow relevant links
+3. Returns exit code 0 (non-blocking)
+
+**Usage**: Include "read the docs" anywhere in your prompt:
+- "read the docs and implement the new API endpoint"
+- "I need you to read the docs before refactoring this"
 
 ## How Change Detection Works
 

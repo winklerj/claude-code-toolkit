@@ -125,9 +125,17 @@ Use extended thinking to thoroughly analyze this architecture.
 
 | Command | Description |
 |---------|-------------|
+| `/QA` | Exhaustive architecture, scalability, and maintainability audit |
+| `/deslop` | Detect and remove 25 patterns of AI-generated code slop |
+| `/docupdate` | Documentation gap analysis and staleness detection |
 | `/webtest` | Test new features using webapp-testing skill (Chrome) |
 | `/interview` | Clarify plan details via AskUserQuestion before implementation |
 | `/weboptimizer` | Performance benchmarks and optimization for Next.js + FastAPI |
+| `/config-audit` | Environment variable analysis and fallback pattern detection |
+| `/mobiletest` | Run Maestro E2E tests with failure diagnosis and fix suggestions |
+| `/mobileaudit` | Vision-based UI/design audit via Maestro screenshots |
+| `/designimprove` | Recursively improve web UI via screenshot grading and targeted fixes |
+| `/uximprove` | Recursively improve UX via usability analysis and targeted fixes |
 
 ## Commands vs Skills vs Hooks
 
@@ -208,7 +216,7 @@ Organize related commands in subdirectories:
 
 ## Related Documentation
 
-- [Hooks Reference](claude-code-hooks.md) - Lifecycle event handlers
-- [Skills Reference](claude-code-skills.md) - Domain-specific knowledge injection
-- [Config Files](claude-code-config/) - Actual command/hook/skill files for installation
+- [Hooks Reference](./hooks.md) - Lifecycle event handlers
+- [Skills Reference](./skills.md) - Domain-specific knowledge injection
+- [Config Files](../../config/) - Actual command/hook/skill files for installation
 - [Official Commands Documentation](https://code.claude.com/docs/en/slash-commands) - Anthropic reference

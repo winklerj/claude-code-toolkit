@@ -34,7 +34,7 @@ For detailed setup instructions, see [QUICKSTART.md](QUICKSTART.md).
 
 ## What's Included
 
-### Commands (7)
+### Commands (11)
 
 Slash commands for structured workflows. Run `/command-name` to invoke.
 
@@ -47,8 +47,12 @@ Slash commands for structured workflows. Run `/command-name` to invoke.
 | `/interview` | Clarify requirements before implementation via Q&A |
 | `/weboptimizer` | Performance benchmarking for Next.js + FastAPI apps |
 | `/config-audit` | Environment variable analysis and fallback pattern detection |
+| `/mobiletest` | Run Maestro E2E tests with failure diagnosis and fix suggestions |
+| `/mobileaudit` | Vision-based UI/design audit via Maestro screenshots |
+| `/designimprove` | Recursively improve web UI via screenshot grading and targeted fixes |
+| `/uximprove` | Recursively improve UX via usability analysis and targeted fixes |
 
-### Skills (6)
+### Skills (9)
 
 Domain expertise Claude automatically applies when relevant keywords appear in your prompts.
 
@@ -60,8 +64,11 @@ Domain expertise Claude automatically applies when relevant keywords appear in y
 | `frontend-design` | Web UI development, distinctive design |
 | `webapp-testing` | Browser testing, Chrome automation, Playwright |
 | `ux-designer` | UX flows, wireframes, WCAG accessibility |
+| `design-improver` | UI design review, screenshot grading, design audit |
+| `ux-improver` | UX usability review, user flows, affordances, feedback states |
+| `docs-navigator` | Read the docs, check documentation, unfamiliar codebase |
 
-### Hooks (3)
+### Hooks (4)
 
 Lifecycle handlers that run automatically at key moments.
 
@@ -69,7 +76,8 @@ Lifecycle handlers that run automatically at key moments.
 |------|-------|---------|
 | SessionStart | Session begins | Forces Claude to read project docs before starting |
 | Stop | Before stopping | Compliance checklist: code standards, docs, commit |
-| UserPromptSubmit | Each prompt | Suggests relevant skills based on prompt keywords |
+| UserPromptSubmit (status) | Each prompt | Instructs Claude to update session-aware status file |
+| UserPromptSubmit (skills) | Each prompt | Suggests relevant skills based on prompt keywords |
 
 ## How It Works
 
@@ -111,7 +119,6 @@ Lifecycle handlers that run automatically at key moments.
 | [docs/concepts/hooks.md](docs/concepts/hooks.md) | Deep dive into hooks |
 | [docs/architecture.md](docs/architecture.md) | How everything fits together |
 | [docs/guides/customization.md](docs/guides/customization.md) | Create your own commands, skills, hooks |
-| [docs/guides/installation.md](docs/guides/installation.md) | Detailed installation options |
 
 ## Directory Structure
 
@@ -119,15 +126,16 @@ Lifecycle handlers that run automatically at key moments.
 claude-code-toolkit/
 ├── config/                     # The actual config files
 │   ├── settings.json           # Global settings + hook definitions
-│   ├── commands/               # 7 slash commands
+│   ├── commands/               # 11 slash commands
 │   │   ├── QA.md
 │   │   ├── deslop.md
 │   │   └── ...
-│   ├── hooks/                  # 3 Python hook scripts
+│   ├── hooks/                  # 4 Python hook scripts
 │   │   ├── stop-validator.py
+│   │   ├── status-working.py
 │   │   ├── skill-reminder.py
 │   │   └── read-docs-trigger.py
-│   └── skills/                 # 6 skill directories
+│   └── skills/                 # 9 skill directories
 │       ├── async-python-patterns/
 │       ├── nextjs-tanstack-stack/
 │       └── ...

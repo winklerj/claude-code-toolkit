@@ -640,8 +640,8 @@ Stop hook error: JSON validation failed
 ## Related Documentation
 
 - [Claude Code Hooks Reference](https://code.claude.com/docs/en/hooks.md) - Official documentation
-- [Commands Reference](claude-code-commands.md) - Custom slash commands
-- [Skills Reference](claude-code-skills.md) - Domain-specific knowledge injection
-- [Config Files](claude-code-config/) - Actual hook/skill/command files for installation
+- [Commands Reference](./commands.md) - Custom slash commands
+- [Skills Reference](./skills.md) - Domain-specific knowledge injection
+- [Config Files](../../config/) - Actual hook/skill/command files for installation
 - Project CLAUDE.md - Per-project coding standards
 - Project .claude/MEMORIES.md - Per-project session memories
