@@ -2,21 +2,23 @@
 """
 Global Stop Hook Validator
 
-Blocks Claude from stopping on first attempt and provides instructions.
+Two-phase stop flow:
+1. First stop (stop_hook_active=false): Show FULL compliance checklist, block
+2. Second stop (stop_hook_active=true): Enforce status file freshness, then allow
+
 Detects change types from git diff and shows relevant testing requirements.
-Verifies status.md exists and is recent before allowing stop.
 
 Exit codes:
   0 - Allow stop
   2 - Block stop (stderr shown to Claude)
 """
 import json
-import os
 import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
 
 # Status file must be updated within this many seconds to be considered fresh
 STATUS_FILE_MAX_AGE_SECONDS = 300  # 5 minutes
@@ -195,8 +197,8 @@ CHANGE_PATTERNS: dict[str, dict] = {
         "tests": [
             "Integration test with real DB, not mocked queries",
             "Test data should match DB column types exactly",
-            "Check: datetime columns → tz-aware in PostgreSQL",
-            "Check: UUID columns → UUID objects, not strings",
+            "Check: datetime columns -> tz-aware in PostgreSQL",
+            "Check: UUID columns -> UUID objects, not strings",
         ],
     },
     "file_export": {
@@ -213,28 +215,58 @@ CHANGE_PATTERNS: dict[str, dict] = {
             "Test export with production-like data (tz-aware dates, UUIDs)",
             "Actually parse the output file in tests, don't just check size",
             "Property test: handle both naive and tz-aware datetime inputs",
-            "Boundary test: verify data survives round-trip (export → import)",
+            "Boundary test: verify data survives round-trip (export -> import)",
         ],
     },
 }
 
 
-def check_status_file(cwd: str) -> tuple[bool, str]:
-    """Check if status.md exists and is recent."""
+def check_status_file(cwd: str, session_id: str = "") -> tuple[bool, str]:
+    """
+    Check if status file exists and was recently updated.
+
+    Checks for session-specific file first (status.<session_id>.md),
+    then falls back to legacy project-level file (status.md).
+
+    Returns:
+        (is_valid, error_message) - is_valid=True if status file is fresh
+    """
     if not cwd:
-        return True, ""  # No cwd, skip check
+        return True, ""  # No cwd provided, skip check
 
-    status_path = Path(cwd) / ".claude" / "status.md"
+    claude_dir = Path(cwd) / ".claude"
 
-    if not status_path.exists():
-        return False, f"Missing: {status_path}"
+    # Try session-specific file first if session_id is available
+    if session_id:
+        session_status_path = claude_dir / f"status.{session_id}.md"
+        if session_status_path.exists():
+            return check_file_freshness(session_status_path)
 
-    # Check if recently modified
-    mtime = status_path.stat().st_mtime
-    age = datetime.now().timestamp() - mtime
+    # Fall back to legacy project-level file
+    legacy_status_path = claude_dir / "status.md"
+    if legacy_status_path.exists():
+        return check_file_freshness(legacy_status_path)
 
-    if age > STATUS_FILE_MAX_AGE_SECONDS:
-        return False, f"Stale: {status_path} (last modified {int(age)}s ago)"
+    # Neither file exists
+    if session_id:
+        expected_path = claude_dir / f"status.{session_id}.md"
+    else:
+        expected_path = legacy_status_path
+
+    return False, f"MISSING: {expected_path}\nYou MUST create this file before stopping."
+
+
+def check_file_freshness(status_path: Path) -> tuple[bool, str]:
+    """Check if a status file was recently modified."""
+    try:
+        mtime = status_path.stat().st_mtime
+        age_seconds = datetime.now().timestamp() - mtime
+
+        if age_seconds > STATUS_FILE_MAX_AGE_SECONDS:
+            age_minutes = int(age_seconds / 60)
+            return False, f"STALE: {status_path}\nLast modified {age_minutes} minutes ago. You MUST update it before stopping."
+    except OSError as e:
+        return False, f"ERROR reading {status_path}: {e}"
 
     return True, ""
 
@@ -314,36 +346,45 @@ def main():
         sys.exit(0)
 
     cwd = input_data.get("cwd", "")
+    session_id = input_data.get("session_id", "")
     stop_hook_active = input_data.get("stop_hook_active", False)
 
-    # SECOND STOP - checklist was shown, now enforce status before allowing stop
+    # =========================================================================
+    # SECOND STOP (stop_hook_active=True): Only enforce status, then allow
+    # =========================================================================
     if stop_hook_active:
-        status_ok, status_msg = check_status_file(cwd)
+        status_ok, status_msg = check_status_file(cwd, session_id)
         if not status_ok:
             # Status still stale - block until updated
             instructions = f"""🚫 STATUS FILE STILL NOT UPDATED
 
 {status_msg}
 
-You MUST update {cwd}/.claude/status.md before stopping:
+You MUST update the status file with your completion status:
+
 ```markdown
 ---
-status: completed
-updated: <timestamp>
-task: <what was done>
+status: completed  # or: error, blocked, idle
+updated: <current timestamp>
+task: <final task description>
 ---
+
 ## Summary
-<accomplishments>
+<What was accomplished>
 ```
 
-Update the status file, then try to stop again."""
+Write the status file now, then try to stop again."""
             print(instructions, file=sys.stderr)
             sys.exit(2)
         # Status OK - allow stop
         sys.exit(0)
 
-    # Gather ALL checks - don't exit early on any single failure
-    status_ok, status_msg = check_status_file(cwd)
+    # =========================================================================
+    # FIRST STOP (stop_hook_active=False): Show FULL checklist
+    # =========================================================================
+
+    # Gather all context
+    status_ok, status_msg = check_status_file(cwd, session_id)
     diff = get_git_diff()
     change_types = detect_change_types(diff)
     change_specific_tests = format_change_specific_tests(change_types)
@@ -355,7 +396,7 @@ Update the status file, then try to stop again."""
 0. 🚫 STATUS FILE UPDATE REQUIRED:
    {status_msg}
 
-   Update {cwd}/.claude/status.md with:
+   Update the status file with:
    ```markdown
    ---
    status: completed
@@ -367,10 +408,8 @@ Update the status file, then try to stop again."""
    ```
 """
 
-    # First stop - block and give FULL instructions (always show complete checklist)
-    instructions = f"""Use ultrathink to verify all requirements are met.
-
-Before stopping, complete these checks:
+    # First stop - block and give FULL instructions
+    instructions = f"""Before stopping, complete these checks:
 {status_section}
 1. CLAUDE.md COMPLIANCE (if code written):
    - boring over clever, local over abstract

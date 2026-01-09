@@ -1,8 +1,8 @@
 ---
 status: completed
-updated: 2026-01-09T16:32:00+00:00
-task: Fixed status enforcement with checklist visibility
+updated: 2026-01-09T17:05:00+00:00
+task: Fix stop hook bug and enhance hooks documentation
 ---
 
 ## Summary
-Added status enforcement on second stop: checklist shown on first stop, status blocking enforced on second stop before allowing completion.
+Fixed the stop-validator.py logic bug where the compliance checklist was never shown (status check happened before stop_hook_active escape hatch). Updated both installed and repo versions with correct two-phase flow. Synced session-aware status file support to repo. Enhanced docs/concepts/hooks.md with session-aware patterns, JSON input schemas, change-type detection table, and two-phase stop flow documentation.

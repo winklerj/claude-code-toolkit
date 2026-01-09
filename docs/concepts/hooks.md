@@ -7,9 +7,40 @@ Reference documentation for implementing global Claude Code hooks that inject co
 Claude Code supports a hooks system that executes shell commands in response to lifecycle events. This document covers four patterns:
 
 1. **SessionStart (Context Injection)**: Force Claude to read project documentation before beginning work
-2. **Stop (Blocking Enforcement)**: Block Claude from stopping until compliance checks are addressed AND status.md is updated
-3. **UserPromptSubmit (Status Updates)**: Instruct Claude to update .claude/status.md on every prompt for Mimesis UI monitoring
+2. **Stop (Two-Phase Blocking)**: Block Claude from stopping until compliance checks are addressed AND status file is updated
+3. **UserPromptSubmit (Status Updates)**: Instruct Claude to update session-aware status file on every prompt for Mimesis UI monitoring
 4. **UserPromptSubmit (On-Demand Doc Reading)**: Trigger deep documentation reading when user says "read the docs"
+
+## Key Concepts
+
+### Session-Aware Status Files
+
+Status files support both session-specific and legacy formats:
+
+| Format | Path | When Used |
+|--------|------|-----------|
+| Session-specific | `.claude/status.<session_id>.md` | When `session_id` is available |
+| Legacy | `.claude/status.md` | Fallback when no session_id |
+
+The hooks check for session-specific files first, then fall back to the legacy format.
+
+### Two-Phase Stop Flow
+
+The Stop hook implements a two-phase blocking pattern:
+
+```
+First stop (stop_hook_active=false):
+→ Show FULL compliance checklist (5 items)
+→ Include status as item 0 if stale/missing
+→ Block (exit 2)
+
+Second stop (stop_hook_active=true):
+→ ONLY check status file freshness
+→ If stale: block with status-only error
+→ If fresh: allow stop (exit 0)
+```
+
+This ensures Claude sees the full checklist at least once, while preventing infinite loops.
 
 ## Architecture
 
@@ -42,6 +73,27 @@ Claude Code supports a hooks system that executes shell commands in response to 
 | 0 | Success, allow action |
 | 2 | Block action, stderr shown to Claude |
 | Other | Non-blocking error, logged only |
+
+### JSON Input Schema
+
+All hooks receive JSON input via stdin with these fields:
+
+```json
+{
+  "session_id": "abc123-def456-...",
+  "cwd": "/path/to/project",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | string | Unique session identifier (for session-specific files) |
+| `cwd` | string | Current working directory of the Claude session |
+| `hook_event_name` | string | The hook event type (SessionStart, Stop, UserPromptSubmit) |
+| `stop_hook_active` | boolean | **Stop hook only**: True if Claude is continuing after a previous block |
+| `message` | string | **UserPromptSubmit only**: The user's message text |
 
 ### SessionStart Matchers
 
@@ -130,13 +182,19 @@ Second stop: stop_hook_active=true  → Allow (loop prevention)
 
 Location: `~/.claude/hooks/stop-validator.py`
 
+The stop validator implements two-phase blocking with change-type detection:
+
+**Phase 1 (First Stop)**: Shows the full compliance checklist
+**Phase 2 (Second Stop)**: Only enforces status file freshness
+
 ```python
 #!/usr/bin/env python3
 """
 Global Stop Hook Validator
 
-Blocks Claude from stopping on first attempt and provides instructions.
-Uses stop_hook_active flag to prevent infinite loops.
+Two-phase stop flow:
+1. First stop (stop_hook_active=false): Show FULL compliance checklist, block
+2. Second stop (stop_hook_active=true): Enforce status file freshness, then allow
 
 Exit codes:
   0 - Allow stop
@@ -144,54 +202,76 @@ Exit codes:
 """
 import json
 import sys
+from datetime import datetime
+from pathlib import Path
 
+STATUS_FILE_MAX_AGE_SECONDS = 300  # 5 minutes
+
+def check_status_file(cwd: str, session_id: str = "") -> tuple[bool, str]:
+    """Check session-specific or legacy status file."""
+    claude_dir = Path(cwd) / ".claude"
+
+    # Try session-specific file first
+    if session_id:
+        session_path = claude_dir / f"status.{session_id}.md"
+        if session_path.exists():
+            return check_freshness(session_path)
+
+    # Fall back to legacy
+    legacy_path = claude_dir / "status.md"
+    if legacy_path.exists():
+        return check_freshness(legacy_path)
+
+    return False, "MISSING: status file not found"
 
 def main():
-    try:
-        input_data = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        # If we can't parse input, allow stop to prevent blocking
-        sys.exit(0)
-
+    input_data = json.load(sys.stdin)
+    cwd = input_data.get("cwd", "")
+    session_id = input_data.get("session_id", "")
     stop_hook_active = input_data.get("stop_hook_active", False)
 
-    # Break the loop - if we already blocked once, allow stop
+    # SECOND STOP: Only enforce status, then allow
     if stop_hook_active:
-        sys.exit(0)
+        status_ok, msg = check_status_file(cwd, session_id)
+        if not status_ok:
+            print(f"🚫 STATUS FILE STILL NOT UPDATED\n{msg}", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)  # Allow stop
 
-    # First stop - block and give instructions
-    instructions = """Before stopping, complete these checks:
-
-1. CLAUDE.md COMPLIANCE (if code written):
-   - boring over clever, local over abstract
-   - small composable units, stateless with side effects at edges
-   - fail loud never silent, tests are truth
-   - type hints everywhere, snake_case files, absolute imports
-   - Pydantic for contracts, files < 400 lines, functions < 60 lines
-
-2. DOCUMENTATION (if code written):
-   - Read docs/index.md to understand the documentation structure
-   - Identify ALL docs affected by your changes (architecture, API, operations, etc.)
-   - Update those docs to reflect current implementation
-   - Docs are the authoritative source - keep them accurate and current
-   - Add new docs if you created new components/patterns not yet documented
-
-3. UPDATE PROJECT .claude/MEMORIES.md (create if needed):
-   This is NOT a changelog. Only add HIGH-VALUE entries:
-   - User preferences that affect future work style
-   - Architectural decisions with WHY (not what)
-   - Non-obvious gotchas not documented elsewhere
-   - Consolidate/update existing entries rather than append duplicates
-   - If nothing significant learned, skip this step
-
-After completing these checks, you may stop."""
-
+    # FIRST STOP: Show FULL checklist
+    status_ok, status_msg = check_status_file(cwd, session_id)
+    # ... detect change types from git diff ...
+    # ... format full checklist with status as item 0 if needed ...
     print(instructions, file=sys.stderr)
     sys.exit(2)
+```
 
+#### Change-Type Detection
 
-if __name__ == "__main__":
-    main()
+The stop validator detects change types from `git diff` and shows relevant testing requirements:
+
+| Change Type | Detected Patterns | Example Tests |
+|-------------|-------------------|---------------|
+| `env_var` | `NEXT_PUBLIC_`, `process.env.`, `os.environ` | Check for localhost fallbacks |
+| `auth` | `clearToken`, `logout`, `useAuth` | Test 401 cascade behavior |
+| `link` | `<Link`, `router.push`, `href="/"` | Validate route targets exist |
+| `api_route` | `@app.get`, `APIRouter`, `FastAPI` | Test through proxy, check 307 redirects |
+| `websocket` | `WebSocket`, `wss://`, `socket.on` | Test with production WS URL |
+| `database` | `CREATE TABLE`, `migration`, `alembic` | Run migrations, verify rollback |
+| `proxy` | `proxy`, `rewrites`, `CORS` | Test full request flow |
+| `datetime_boundary` | `datetime`, `timezone`, `openpyxl` | Test with tz-aware datetimes |
+| `serialization_boundary` | `.model_dump`, `json.dumps`, `BytesIO` | Test with UUID, Decimal types |
+| `orm_boundary` | `.query(`, `.filter(`, `AsyncSession` | Integration test with real DB |
+| `file_export` | `to_excel`, `csv.writer`, `Workbook(` | Parse actual output in tests |
+
+When detected, the checklist includes a section like:
+```
+4. CHANGE-SPECIFIC TESTING REQUIRED:
+
+   ⚠️  AUTH CHANGES DETECTED:
+      - Trace all paths to token clearing functions
+      - Test auth cascade: what happens on 401 response?
+      - Verify network failures don't incorrectly clear auth state
 ```
 
 **Mnemonic structure** in the instructions:
@@ -286,18 +366,25 @@ When `stop_hook_active=true` (second stop attempt): Hook allows stop silently.
 
 ### Status File Enforcement
 
-The Stop hook also verifies that `.claude/status.md` exists and was recently updated (within 5 minutes). This ensures Claude always writes status updates for the Mimesis monitoring UI before stopping.
+The Stop hook verifies that a status file exists and was recently updated (within 5 minutes). This ensures Claude always writes status updates for the Mimesis monitoring UI before stopping.
 
-**Status check is NOT bypassed by `stop_hook_active`** - even on the second stop attempt, Claude must have an up-to-date status file.
+**Session-Aware Status Files**:
+- First checks: `.claude/status.<session_id>.md` (if session_id available)
+- Falls back to: `.claude/status.md` (legacy format)
 
+**Two-Phase Enforcement**:
 ```
-First stop:  status missing → Block with status instructions
-Second stop: status present → Check compliance (stop_hook_active logic)
+First stop:  Show FULL checklist (status as item 0 if stale)
+Second stop: ONLY check status freshness, then allow
 ```
+
+The status check is **enforced on both phases** but with different behaviors:
+- Phase 1: Status failure is one item in the full checklist
+- Phase 2: Status failure blocks with a focused status-only message
 
 ### UserPromptSubmit Hook (Status Updates)
 
-On every user prompt, Claude receives instructions to update `.claude/status.md`. This is advisory (exit 0) but combined with the blocking Stop hook, ensures status is always written.
+On every user prompt, Claude receives MANDATORY instructions to update the session-aware status file. This is advisory (exit 0) but combined with the blocking Stop hook, ensures status is always written.
 
 #### Status Working Script
 
@@ -306,7 +393,11 @@ Location: `~/.claude/hooks/status-working.py`
 ```python
 #!/usr/bin/env python3
 """
-UserPromptSubmit hook - instructs Claude to update status.md for Mimesis UI monitoring.
+UserPromptSubmit hook - outputs MANDATORY instructions for Claude to write working status.
+
+This hook fires on every user prompt and instructs Claude to write its status
+to <cwd>/.claude/status.<session_id>.md. The daemon watches these files and streams
+updates to the Mimesis UI.
 """
 import json
 import sys
@@ -320,13 +411,24 @@ def main():
         sys.exit(0)
 
     cwd = input_data.get("cwd", "")
+    session_id = input_data.get("session_id", "")
+
     if not cwd:
         sys.exit(0)
+
+    # Determine status file path - session-specific if available, else legacy
+    if session_id:
+        status_file = f"{cwd}/.claude/status.{session_id}.md"
+    else:
+        status_file = f"{cwd}/.claude/status.md"
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
     instruction = f"""<system-reminder>
-Write your current status to {cwd}/.claude/status.md in this format:
+MANDATORY: You MUST write your status to {status_file} BEFORE proceeding.
+
+This is REQUIRED for the Mimesis monitoring UI. The stop hook will BLOCK you from
+stopping if this file is missing or stale. Write it NOW.
 
 ```markdown
 ---
@@ -338,6 +440,11 @@ task: <brief description of what you're working on>
 ## Summary
 <1-2 sentence summary of current activity>
 ```
+
+Do NOT skip this step. Update this file when:
+- Starting a new subtask
+- Encountering blockers
+- Completing significant milestones
 </system-reminder>"""
 
     print(instruction)
