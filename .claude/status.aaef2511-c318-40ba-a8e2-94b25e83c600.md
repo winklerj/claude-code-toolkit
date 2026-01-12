@@ -1,8 +1,8 @@
 ---
 status: working
-updated: 2026-01-12T12:06:15+00:00
-task: Fix UnicodeDecodeError in finalize-status-v5.py
+updated: 2026-01-12T15:31:50+00:00
+task: Remove auto-switch module completely
 ---
 
 ## Summary
-Hook failing with UnicodeDecodeError when git diff contains non-UTF-8 bytes. Need to add errors="replace" to subprocess call.
+Planning complete removal of claude-auto-switch module - deleting files, removing aliases, cleaning up symlinks.
